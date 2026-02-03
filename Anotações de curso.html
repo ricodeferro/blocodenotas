@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Notas do Curso - Sir Rico</title>
+  <style>
+    :root{
+      --bg:#f4f4f4;
+      --card:#fff;
+      --text:#222;
+      --accent:#4CAF50;
+      --danger:#e74c3c;
+      --info:#3498db;
+      --export:#f39c12;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 20px;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    .dark-mode {
+      --bg:#121212;
+      --card:#1e1e1e;
+      --text:#f4f4f4;
+    }
+    h1 { text-align:center; margin-bottom:6px; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    textarea, input[type="text"], select {
+      width:100%;
+      padding:10px;
+      font-size:14px;
+      margin-bottom:8px;
+      box-sizing:border-box;
+      border:1px solid #ccc;
+      border-radius:4px;
+      background:transparent;
+      color:inherit;
+    }
+    button {
+      padding:8px 12px;
+      background:var(--accent);
+      color:#fff;
+      border:none;
+      cursor:pointer;
+      border-radius:4px;
+    }
+    button:hover{ filter:brightness(.95); }
+    .delete-btn{ background:var(--danger); }
+    .restore-btn{ background:var(--info); }
+    .export-btn{ background:var(--export); }
+    .small { padding:6px 8px; font-size:13px; }
+    .container { display:grid; grid-template-columns: 1fr 360px; gap:16px; align-items:start; }
+    .card { background:var(--card); padding:12px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; }
+    .dark-mode .card { border-color:#444; }
+    ul { list-style:none; padding-left:0; margin:0; }
+    li { padding:8px 6px; border-bottom:1px dashed #ddd; display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+    .dark-mode li { border-color:#333; }
+    .meta { font-size:12px; color:#666; }
+    .dark-mode .meta { color:#bbb; }
+    .note-text { flex:1; margin-right:8px; white-space:pre-wrap; }
+    .note-actions { display:flex; gap:6px; flex-shrink:0; }
+    .counters { display:flex; gap:12px; margin-bottom:8px; font-weight:600; }
+    .recent-list li { border-bottom:1px solid #eee; padding:6px 0; }
+    .dark-mode .recent-list li { border-color:#333; }
+    .badge { background:#eee; padding:3px 6px; border-radius:12px; font-size:12px; }
+    .dark-mode .badge { background:#2a2a2a; color:#f4f4f4; }
+    .top-row { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px; }
+    @media(max-width:900px){ .container{ grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>📘 Organização dia a dia</h1>
+
+  <div class="top-row">
+    <div class="counters card" id="counters">
+      <div>Notas: <span id="countNotes" class="badge">0</span></div>
+      <div>Lixeira: <span id="countTrash" class="badge">0</span></div>
+    </div>
+
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button onclick="toggleDarkMode()" class="small">🌙 Alternar Dark Mode</button>
+      <button onclick="exportNotes()" class="export-btn small">📤 Exportar .txt</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div>
+      <div class="card">
+        <textarea id="noteInput" placeholder="Digite suas anotações aqui..."></textarea>
+        <select id="category">
+          <option value="Estudo">📖 Estudo</option>
+          <option value="Academia">💪 Academia</option>
+          <option value="Ideias">💡 Ideias</option>
+          <option value="Outro">📝 Outro</option>
+        </select>
+
+        <div class="controls">
+          <button onclick="saveNote()">Salvar Nota</button>
+          <input type="text" id="searchInput" placeholder="🔍 Pesquisar notas..." style="flex:1" />
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h3>Notas Salvas</h3>
+        <ul id="notes"></ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>Últimas alterações</h3>
+        <ul id="recent" class="recent-list"></ul>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h3>Lixeira</h3>
+        <ul id="trash"></ul>
+        <div style="margin-top:8px; font-size:12px; color:#666;">
+          Notas na lixeira são removidas automaticamente após <strong>10 dias</strong>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Estrutura de nota:
+    // { id, text, category, createdAt (ms), lastModified (ms), deletedAt (ms|null) }
+
+    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
+
+    let notes = JSON.parse(localStorage.getItem("notes")) || [];
+    let trash = JSON.parse(localStorage.getItem("trash")) || [];
+    let darkMode = JSON.parse(localStorage.getItem("darkMode")) || false;
+
+    // Utilitários
+    function now() { return Date.now(); }
+    function fmt(ts) {
+      if (!ts) return "-";
+      const d = new Date(ts);
+      return d.toLocaleString('pt-BR');
+    }
+    function saveStorage() {
+      localStorage.setItem("notes", JSON.stringify(notes));
+      localStorage.setItem("trash", JSON.stringify(trash));
+    }
+
+    // Limpa lixeira removendo itens com deletedAt > 10 dias
+    function cleanTrashExpired() {
+      const before = trash.length;
+      const cutoff = now() - TEN_DAYS_MS;
+      trash = trash.filter(item => !(item.deletedAt && item.deletedAt < cutoff));
+      if (trash.length !== before) saveStorage();
+    }
+
+    // Renderizadores
+    function renderCounters() {
+      document.getElementById("countNotes").textContent = notes.length;
+      document.getElementById("countTrash").textContent = trash.length;
+    }
+
+    function renderNotes(list = notes) {
+      const notesList = document.getElementById("notes");
+      notesList.innerHTML = "";
+      list.forEach((note, index) => {
+        const li = document.createElement("li");
+
+        const left = document.createElement("div");
+        left.className = "note-text";
+        left.innerHTML = `<strong>[${note.category}]</strong> ${escapeHtml(note.text)}`;
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.innerHTML = `Criada: ${fmt(note.createdAt)}<br>Última alteração: ${fmt(note.lastModified)}`;
+
+        const infoWrap = document.createElement("div");
+        infoWrap.style.marginRight = "8px";
+        infoWrap.appendChild(left);
+        infoWrap.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "note-actions";
+
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Editar";
+        editBtn.className = "small";
+        editBtn.onclick = () => editNote(note.id);
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "Excluir";
+        deleteBtn.className = "delete-btn small";
+        deleteBtn.onclick = () => moveToTrash(note.id);
+
+        actions.appendChild(editBtn);
+        actions.appendChild(deleteBtn);
+
+        li.appendChild(infoWrap);
+        li.appendChild(actions);
+        notesList.appendChild(li);
+      });
+      renderCounters();
+    }
+
+    function renderTrash() {
+      cleanTrashExpired();
+      const trashList = document.getElementById("trash");
+      trashList.innerHTML = "";
+      trash.forEach((note, index) => {
+        const li = document.createElement("li");
+
+        const left = document.createElement("div");
+        left.className = "note-text";
+        left.innerHTML = `<strong>[${note.category}]</strong> ${escapeHtml(note.text)}`;
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.innerHTML = `Criada: ${fmt(note.createdAt)}<br>Excluída: ${fmt(note.deletedAt)}`;
+
+        const infoWrap = document.createElement("div");
+        infoWrap.style.marginRight = "8px";
+        infoWrap.appendChild(left);
+        infoWrap.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "note-actions";
+
+        const restoreBtn = document.createElement("button");
+        restoreBtn.textContent = "Restaurar";
+        restoreBtn.className = "restore-btn small";
+        restoreBtn.onclick = () => restoreNote(note.id);
+
+        const permDeleteBtn = document.createElement("button");
+        permDeleteBtn.textContent = "Excluir p/ sempre";
+        permDeleteBtn.className = "delete-btn small";
+        permDeleteBtn.onclick = () => permDelete(note.id);
+
+        actions.appendChild(restoreBtn);
+        actions.appendChild(permDeleteBtn);
+
+        li.appendChild(infoWrap);
+        li.appendChild(actions);
+        trashList.appendChild(li);
+      });
+      renderCounters();
+    }
+
+    // Últimas alterações (top 5 por lastModified)
+    function renderRecentChanges() {
+      const recentEl = document.getElementById("recent");
+      recentEl.innerHTML = "";
+      const combined = notes.concat(trash);
+      combined.sort((a,b) => (b.lastModified || b.createdAt) - (a.lastModified || a.createdAt));
+      combined.slice(0,5).forEach(item => {
+        const li = document.createElement("li");
+        const when = item.lastModified || item.createdAt;
+        li.innerHTML = `<strong>[${item.category}]</strong> ${escapeHtml(truncate(item.text,80))} <div class="meta">Última alteração: ${fmt(when)}</div>`;
+        recentEl.appendChild(li);
+      });
+    }
+
+    // Operações
+    function saveNote() {
+      const noteInput = document.getElementById("noteInput");
+      const category = document.getElementById("category").value;
+      const text = noteInput.value.trim();
+      if (!text) { alert("Digite algo antes de salvar!"); return; }
+      const timestamp = now();
+      const note = {
+        id: generateId(),
+        text,
+        category,
+        createdAt: timestamp,
+        lastModified: timestamp,
+        deletedAt: null
+      };
+      notes.push(note);
+      noteInput.value = "";
+      saveStorage();
+      renderNotes();
+      renderRecentChanges();
+    }
+
+    function moveToTrash(id) {
+      const idx = notes.findIndex(n => n.id === id);
+      if (idx === -1) return;
+      const note = notes.splice(idx,1)[0];
+      note.deletedAt = now();
+      trash.push(note);
+      saveStorage();
+      renderNotes();
+      renderTrash();
+      renderRecentChanges();
+    }
+
+    function restoreNote(id) {
+      const idx = trash.findIndex(n => n.id === id);
+      if (idx === -1) return;
+      const note = trash.splice(idx,1)[0];
+      note.deletedAt = null;
+      note.lastModified = now();
+      notes.push(note);
+      saveStorage();
+      renderNotes();
+      renderTrash();
+      renderRecentChanges();
+    }
+
+    function permDelete(id) {
+      const idx = trash.findIndex(n => n.id === id);
+      if (idx === -1) return;
+      if (!confirm("Excluir permanentemente esta nota?")) return;
+      trash.splice(idx,1);
+      saveStorage();
+      renderTrash();
+      renderRecentChanges();
+    }
+
+    function editNote(id) {
+      const idx = notes.findIndex(n => n.id === id);
+      if (idx === -1) return;
+      const note = notes[idx];
+      const newText = prompt("Editar nota:", note.text);
+      if (newText === null) return; // cancelou
+      const newCategory = prompt("Categoria (Estudo, Academia, Ideias, Outro):", note.category) || note.category;
+      note.text = newText.trim() || note.text;
+      note.category = newCategory;
+      note.lastModified = now();
+      saveStorage();
+      renderNotes();
+      renderRecentChanges();
+    }
+
+    // Export
+    function exportNotes() {
+      let content = "Notas Salvas:\n\n";
+      notes.forEach(n => {
+        content += `- [${n.category}] ${n.text}\n  Criada: ${fmt(n.createdAt)}\n  Última alteração: ${fmt(n.lastModified)}\n\n`;
+      });
+      content += "\nLixeira:\n\n";
+      trash.forEach(n => {
+        content += `- [${n.category}] ${n.text}\n  Criada: ${fmt(n.createdAt)}\n  Excluída: ${fmt(n.deletedAt)}\n\n`;
+      });
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "notas_sir_rico.txt";
+      link.click();
+    }
+
+    // Busca
+    document.getElementById("searchInput").addEventListener("input", function() {
+      const q = this.value.trim().toLowerCase();
+      if (!q) { renderNotes(); return; }
+      const filtered = notes.filter(n => n.text.toLowerCase().includes(q) || n.category.toLowerCase().includes(q));
+      renderNotes(filtered);
+    });
+
+    // Dark mode
+    function toggleDarkMode() {
+      darkMode = !darkMode;
+      if (darkMode) document.body.classList.add("dark-mode");
+      else document.body.classList.remove("dark-mode");
+      localStorage.setItem("darkMode", JSON.stringify(darkMode));
+    }
+
+    // Helpers
+    function generateId() {
+      return 'id-' + Math.random().toString(36).slice(2,10);
+    }
+    function truncate(str, n) {
+      return str.length > n ? str.slice(0,n-1) + "…" : str;
+    }
+    function escapeHtml(text) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+      return text.replace(/[&<>"']/g, m => map[m]);
+    }
+
+    // Inicialização
+    function init() {
+      // Limpa lixeira expirados ao iniciar
+      cleanTrashExpired();
+      // Aplica dark mode salvo
+      if (darkMode) document.body.classList.add("dark-mode");
+      renderNotes();
+      renderTrash();
+      renderRecentChanges();
+      // Periodicamente limpar lixeira (a cada hora)
+      setInterval(() => {
+        const before = trash.length;
+        cleanTrashExpired();
+        if (trash.length !== before) {
+          renderTrash();
+          renderRecentChanges();
+        }
+      }, 1000 * 60 * 60); // 1 hora
+    }
+
+    init();
+  </script>
+</body>
+</html>
